@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand: #3b82f6;
+  --color-dark-bg: #020617;
+  --color-dark-card: #0f172a;
+
+}
+
+body {
+  background-color: var(--color-dark-bg);
+  color: #f8fafc;
+}

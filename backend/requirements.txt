@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+httpx
+beautifulsoup4
+playwright
+playwright-stealth
+transformers
+torch
