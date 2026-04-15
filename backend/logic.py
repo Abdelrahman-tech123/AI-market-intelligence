@@ -1,8 +1,9 @@
 import asyncio
 import re
 import httpx
+from urllib.parse import quote_plus
 from bs4 import BeautifulSoup
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 from playwright_stealth import Stealth
 from transformers import pipeline
 import torch
@@ -118,10 +119,86 @@ def convert_to_usd(price_text, source):
 
 # ============ PLAYWRIGHT SCRAPER ============
 
+SOURCE_READY_SELECTORS = {
+    "amazon": [
+        "div[data-component-type='s-search-result']",
+        "[data-cel-widget='search_result_0']",
+        ".s-main-slot",
+    ],
+    "alibaba": [
+        ".search-card-wrapper",
+        ".list-no-v2-main",
+        "[class*='gallery-card']",
+        '[data-testid="search-result"]',
+    ],
+}
+
+async def _wait_for_any_selector(page, selectors, timeout=12000):
+    for selector in selectors:
+        try:
+            await page.wait_for_selector(selector, timeout=timeout)
+            return selector
+        except PlaywrightTimeoutError:
+            continue
+        except Exception:
+            continue
+    return None
+
+
+async def _navigate_and_capture(page, url, source):
+    """Use looser readiness checks than networkidle and keep partial HTML on timeout."""
+    selectors = SOURCE_READY_SELECTORS.get(source, [])
+    attempts = [
+        ("domcontentloaded", 45000),
+        ("load", 45000),
+        ("commit", 30000),
+    ]
+
+    for wait_until, timeout in attempts:
+        try:
+            await page.goto(url, wait_until=wait_until, timeout=timeout)
+            if selectors:
+                matched = await _wait_for_any_selector(page, selectors, timeout=12000)
+                if matched:
+                    print(f"✅ {source}: ready selector matched after {wait_until}: {matched}")
+                else:
+                    print(f"⚠️ {source}: navigation succeeded but no ready selector matched after {wait_until}")
+            await page.wait_for_timeout(1500)
+            return await page.content()
+        except PlaywrightTimeoutError:
+            print(f"⚠️ {source}: goto timed out with wait_until={wait_until}, checking partial content")
+            try:
+                if selectors:
+                    matched = await _wait_for_any_selector(page, selectors, timeout=6000)
+                    if matched:
+                        print(f"✅ {source}: recovered from timeout using partial DOM: {matched}")
+                        await page.wait_for_timeout(1000)
+                        return await page.content()
+
+                html = await page.content()
+                if html and len(html) > 2000:
+                    print(f"⚠️ {source}: using partial HTML after timeout ({len(html)} chars)")
+                    return html
+            except Exception:
+                pass
+        except Exception as nav_error:
+            print(f"⚠️ {source}: navigation attempt failed with wait_until={wait_until}: {str(nav_error)[:120]}")
+
+    return None
+
+async def _block_nonessential_assets(route):
+    """Exclude images, stylesheets, and fonts to speed up page load."""
+    if route.request.resource_type in ["image", "stylesheet", "font", "media", "other"]:
+        await route.abort()
+    else:
+        await route.continue_()
+
 async def scrape_with_playwright(url, source):
     """Scrape using Playwright with Stealth - optimized for better page loading"""
+    browser = None
     try:
         print(f"🌐 Scraping {source} with Playwright...")
+        
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled'])
             context = await browser.new_context(
@@ -137,14 +214,17 @@ async def scrape_with_playwright(url, source):
             page = await context.new_page()
 
             # --- ADD THIS TURBO BLOCK HERE ---
-            await page.route("**/*.{png,jpg,jpeg,svg,css,woff2,gif}", lambda route: route.abort())
+            await page.route("**/*", _block_nonessential_assets)
             # ---------------------------------
 
             stealth = Stealth()
             await stealth.apply_stealth_async(page)
             
             # Reduce sleep time since we aren't loading images
-            await page.goto(url, wait_until="networkidle", timeout=30000)
+            html = await _navigate_and_capture(page, url, source)
+            if not html:
+                await browser.close()
+                return None
 
             # استنى السعر يظهر فعلاً
             try:
@@ -157,17 +237,21 @@ async def scrape_with_playwright(url, source):
             return BeautifulSoup(html, "html.parser")
     except Exception as e:
         print(f"❌ {source} Playwright error: {str(e)[:100]}")
-        try:
-            await browser.close()
-        except:
-            pass
+        if browser:
+            try:
+                await browser.close()
+            except:
+                pass
         return None
 
 
 async def get_exact_price(context, link):
     try:
         page = await context.new_page()
-        await page.goto(link, wait_until="networkidle", timeout=30000)
+        html = await _navigate_and_capture(page, link, "amazon")
+        if not html:
+            await page.close()
+            return None
 
         selectors = [
             "#priceblock_ourprice",
@@ -195,7 +279,7 @@ async def get_exact_price(context, link):
 
 # ============ AMAZON SCRAPER ============
 async def get_amazon_products(keyword: str):
-    url = f"https://www.amazon.com/s?k={keyword}"
+    url = f"https://www.amazon.com/s?k={quote_plus(keyword)}"
     soup = await scrape_with_playwright(url, "amazon")
     
     if not soup:
@@ -260,30 +344,31 @@ async def get_amazon_products(keyword: str):
             img_elem = item.select_one("img.s-image")
             image = img_elem.get("src", "") if img_elem else ""
 
-            # =========================
-            # ✅ AI ANALYSIS
-            # =========================
-            label, score = "neutral", 0.0
-            if ai_classifier:
-                try:
-                    res = ai_classifier(title[:200], ["positive", "negative", "neutral"])
-                    label = res["labels"][0]
-                    score = round(res["scores"][0], 4)
-                except:
-                    pass
-
             products.append({
                 "title": title,
                 "price": price_usd,
                 "link": link,
                 "image": image,
                 "source": "amazon",
-                "ai_label": label,
-                "ai_score": score
+                "ai_label": "neutral",
+                "ai_score": 0.0
             })
 
+            if len(products) >= 5: break
         except Exception:
             continue
+
+    # 2. BATCH AI ANALYSIS (Outside the loop)
+    if ai_classifier and products:
+        titles = [p["title"][:200] for p in products]
+        try:
+            # Most modern classifiers can handle a list of strings for speed
+            results = ai_classifier(titles, ["positive", "negative", "neutral"])
+            for i, res in enumerate(results):
+                products[i]["ai_label"] = res["labels"][0]
+                products[i]["ai_score"] = round(res["scores"][0], 4)
+        except:
+            pass # Fallback to neutral if batch fails
 
     print(f"✅ Amazon: Extracted {len(products)} products")
     return products
@@ -322,7 +407,7 @@ async def get_ebay_products(keyword: str):
                     soup.select(".s-card") or \
                     soup.select(".srp-results li")
 
-            for item in items:
+            for item in items[:15]:
                 # 2. EXTRACT TITLE (Check for span or direct text)
                 title_elem = item.select_one(".s-item__title") or \
                              item.select_one(".s-card__title")
@@ -352,6 +437,8 @@ async def get_ebay_products(keyword: str):
                         "image": img_elem.get('src', img_elem.get('data-src', '')) if img_elem else "",
                         "source": "ebay"
                     })
+                if len(products) >= 7:
+                    break
     except Exception as e:
         print(f"🧨 eBay Source Error: {e}")
     
@@ -360,56 +447,84 @@ async def get_ebay_products(keyword: str):
 # ============ ALIBABA SCRAPER (WebScraping.ai) ============
 
 async def get_alibaba_products(keyword: str):
-    """Scrape Alibaba using WebScraping.ai's JS Rendering"""
-    print(f"📡 Requesting Alibaba via WebScraping.ai (JS Rendered)...")
+    # Forced English and USD via URL parameters
+    url = f"https://www.alibaba.com/trade/search?SearchText={quote_plus(keyword)}&IndexArea=product_en&fsb=y"
     
-    target_url = f"https://www.alibaba.com/trade/search?SearchText={keyword}"
-    api_url = "https://api.webscraping.ai/html"
+    # Use your existing playwright function
+    soup = await scrape_with_playwright(url, "alibaba")
     
-    # Alibaba is JS-heavy and has tougher bot detection
-    params = {
-        "api_key": WEBSCRAPING_AI_KEY,
-        "url": target_url,
-        "render": "js",         # Required to see search results
-        "proxy": "residential"  # Required to avoid being blocked by Alibaba
-    }
-
+    if not soup: 
+        print("❌ Alibaba: Soup is empty")
+        return []
+    
     products = []
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.get(api_url, params=params)
-            if response.status_code != 200:
-                print(f"❌ Alibaba Error: {response.status_code}")
-                return []
+    
+    # NEW SELECTORS: Alibaba updated these recently
+    items = soup.select(".search-card-wrapper") or \
+            soup.select(".list-no-v2-main") or \
+            soup.select("[class*='gallery-card']")
 
-            soup = BeautifulSoup(response.text, "html.parser")
-            # Using specific selectors found in your previous version
-            items = soup.select(".organic-list-offer") or soup.select("[class*='offer']")
+    print(f"📦 Alibaba: Processing {len(items)} potential matches")
+    
+    for item in items:
+        try:
+            # 1. Title
+            title_elem = item.select_one(".search-card-e-title") or \
+                         item.select_one("h2") or \
+                         item.select_one(".title")
+            if not title_elem: continue
+            t_text = title_elem.get_text(strip=True)
+
+            # 2. Price (Handling ranges like $10.00 - $20.00)
+            price_elem = item.select_one(".search-card-e-price-main") or \
+                         item.select_one("[class*='price']")
             
-            for item in items[:20]: # Limit for performance
-                title = item.select_one(".organic-list-offer-outter-title-text") or item.select_one("h2")
-                price = item.select_one(".search-card-e-price-main-price") or item.select_one("[class*='price']")
-                link = item.find("a", href=True)
-                img = item.select_one("img")
+            raw_price = price_elem.get_text(strip=True) if price_elem else "N/A"
+            
+            # Clean price: Keep the first number found
+            price_match = re.search(r"(\d+\.\d{2})", raw_price.replace(",", ""))
+            price_usd = f"${price_match.group(1)}" if price_match else raw_price
 
-                if title and price:
-                    title_text = title.text.strip()
-                    label, score = apply_ai_analysis(title_text)
-                    
-                    href = link.get('href', '')
-                    full_link = "https:" + href if href.startswith("//") else href
-                    
-                    products.append({
-                        "title": title_text,
-                        "price": convert_to_usd(price.text.strip(), "alibaba"),
-                        "link": full_link,
-                        "image": img.get('src', img.get('data-src', '')) if img else "",
-                        "source": "alibaba",
-                        "ai_label": label,
-                        "ai_score": score
-                    })
-    except Exception as e:
-        print(f"🧨 Alibaba Critical Error: {e}")
-        
-    print(f"✅ Alibaba: Found {len(products)} products")
+            # 3. Link & Image
+            link_elem = item.select_one("a")
+            img_elem = item.select_one("img")
+            
+            # Fix protocol-relative URLs (//)
+            img_url = img_elem.get('src') or img_elem.get('data-src') or ""
+            if img_url.startswith("//"): img_url = "https:" + img_url
+            
+            href = link_elem.get('href', '') if link_elem else ""
+            if href.startswith("//"): href = "https:" + href
+
+            # AI Analysis
+            label, score = "neutral", 0.0
+            if ai_classifier:
+                res = ai_classifier(t_text[:200], ["positive", "negative", "neutral"])
+                label, score = res['labels'][0], res['scores'][0]
+
+            products.append({
+                "title": t_text,
+                "price": price_usd,
+                "link": href,
+                "image": img_url,
+                "source": "alibaba",
+                "ai_label": "neutral",
+                "ai_score": 0.0
+            })
+            if len(products) >= 5: break
+        except Exception as e:
+            print(f"⚠️ Alibaba item skip: {e}")
+            continue
+
+    # 2. BATCH AI ANALYSIS
+    if ai_classifier and products:
+        try:
+            results = ai_classifier([p["title"][:200] for p in products], ["positive", "negative", "neutral"])
+            for i, res in enumerate(results):
+                products[i]["ai_label"] = res["labels"][0]
+                products[i]["ai_score"] = round(res["scores"][0], 4)
+        except:
+            pass
+            
+    print(f"✅ Alibaba: Successfully extracted {len(products)} products")
     return products

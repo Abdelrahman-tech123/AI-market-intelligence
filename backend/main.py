@@ -1,8 +1,18 @@
 import sys
 import asyncio
+import os
+
+# Force Proactor Event Loop on Windows BEFORE importing anything async
 if sys.platform == 'win32':
-    # This is the specific loop that supports subprocesses/Playwright on Windows
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    import os
+    os.environ['PYTHONPATH'] = os.getcwd()
+
+# Disable tokenizers parallelism to prevent warnings
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+
+# to start the server with hot-reload:
+# python -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -49,7 +59,7 @@ async def search(keyword: str):
     results = await asyncio.gather(
         get_amazon_products(keyword),
         get_ebay_products(keyword),
-        #get_alibaba_products(keyword),
+        get_alibaba_products(keyword),
         return_exceptions=True
     )
     
@@ -92,8 +102,3 @@ async def search(keyword: str):
         "legit_count": len(legit_products_for_avg),
         "results": all_products
     }
-
-if __name__ == "__main__":
-    import uvicorn
-    # Start via python main.py to ensure the policy above is respected
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
