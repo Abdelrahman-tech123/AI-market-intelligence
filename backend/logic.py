@@ -1,3 +1,5 @@
+import json
+import re
 import asyncio
 import re
 import httpx
@@ -129,6 +131,9 @@ SOURCE_READY_SELECTORS = {
         ".search-card-wrapper",
         ".list-no-v2-main",
         "[class*='gallery-card']",
+        "[class*='offer-card']",
+        "a[href*='/product-detail/']",
+        "a[href*='product-detail']",
         '[data-testid="search-result"]',
     ],
 }
@@ -187,63 +192,71 @@ async def _navigate_and_capture(page, url, source):
     return None
 
 async def _block_nonessential_assets(route):
-    """Exclude images, stylesheets, and fonts to speed up page load."""
-    if route.request.resource_type in ["image", "stylesheet", "font", "media", "other"]:
+    """Block heavy visual assets but allow data-carrying scripts."""
+    # List of types that are safe to block without breaking the data
+    excluded_types = ["image", "font", "media"]
+    
+    if route.request.resource_type in excluded_types:
         await route.abort()
     else:
         await route.continue_()
-
+        
 async def scrape_with_playwright(url, source):
-    """Scrape using Playwright with Stealth - optimized for better page loading"""
     browser = None
     try:
         print(f"🌐 Scraping {source} with Playwright...")
-        
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled'])
+            # Added more flags to look like a real browser
+            browser = await p.chromium.launch(headless=True, args=[
+                '--disable-blink-features=AutomationControlled',
+                '--no-sandbox',
+                '--disable-infobars',
+                '--window-size=1920,1080'
+            ])
+            
             context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
-                locale="en-US",
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                viewport={'width': 1920, 'height': 1080},
+                locale="en-US", # Crucial for Walmart/Best Buy
                 timezone_id="America/New_York",
-                geolocation={"longitude": -74.0060, "latitude": 40.7128},
-                permissions=["geolocation"],
                 extra_http_headers={
-                    "Accept-Language": "en-US,en;q=0.9"
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Referer": "https://www.google.com/" # Makes it look like you came from a search
                 }
-            )            
+            )
+            # --- THE MAGIC FIX FOR ALIEXPRESS ---
+            # This hides the 'bot' flag even if the stealth plugin fails
+            await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            
             page = await context.new_page()
 
-            # --- ADD THIS TURBO BLOCK HERE ---
+            # Apply the optimized turbo block
             await page.route("**/*", _block_nonessential_assets)
-            # ---------------------------------
 
             stealth = Stealth()
             await stealth.apply_stealth_async(page)
             
-            # Reduce sleep time since we aren't loading images
+            # Go to page
             html = await _navigate_and_capture(page, url, source)
+            if source in ["walmart", "bestbuy"]:
+                # Scroll down to trigger lazy-loading
+                await page.mouse.wheel(0, 1500) 
+                await asyncio.sleep(2) # Give it a second to render
+            
             if not html:
                 await browser.close()
                 return None
 
-            # استنى السعر يظهر فعلاً
-            try:
-                await page.wait_for_selector(".a-price .a-offscreen", timeout=5000)
-            except:
-                pass      
-
-            html = await page.content()
+           
+            # Final capture
+            final_html = await page.content()
             await browser.close()
-            return BeautifulSoup(html, "html.parser")
+            return BeautifulSoup(final_html, "html.parser")
+            
     except Exception as e:
         print(f"❌ {source} Playwright error: {str(e)[:100]}")
-        if browser:
-            try:
-                await browser.close()
-            except:
-                pass
         return None
-
+    
 
 async def get_exact_price(context, link):
     try:
@@ -444,87 +457,112 @@ async def get_ebay_products(keyword: str):
     
     return products
 
-# ============ ALIBABA SCRAPER (WebScraping.ai) ============
+# ============ Walmart SCRAPER (WebScraping.ai) ============
 
-async def get_alibaba_products(keyword: str):
-    # Forced English and USD via URL parameters
-    url = f"https://www.alibaba.com/trade/search?SearchText={quote_plus(keyword)}&IndexArea=product_en&fsb=y"
+def _normalize_external_url(url: str) -> str:
+    if not url:
+        return ""
+    if url.startswith("//"):
+        return f"https:{url}"
+    return url
+
+async def get_walmart_products(keyword: str):
+    url = f"https://www.walmart.com/search?q={keyword}"
+    soup = await scrape_with_playwright(url, "walmart")
     
-    # Use your existing playwright function
-    soup = await scrape_with_playwright(url, "alibaba")
-    
-    if not soup: 
-        print("❌ Alibaba: Soup is empty")
-        return []
-    
+    if not soup: return []
+
     products = []
-    
-    # NEW SELECTORS: Alibaba updated these recently
-    items = soup.select(".search-card-wrapper") or \
-            soup.select(".list-no-v2-main") or \
-            soup.select("[class*='gallery-card']")
+    # 2026 Updated Selectors: Walmart often uses data-testid or generic grid classes
+    items = soup.select("div[data-testid='item-stack'] > div") or \
+            soup.select("[data-item-id]") or \
+            soup.select(".mb0.ph0-xl")
 
-    print(f"📦 Alibaba: Processing {len(items)} potential matches")
-    
     for item in items:
         try:
-            # 1. Title
-            title_elem = item.select_one(".search-card-e-title") or \
-                         item.select_one("h2") or \
-                         item.select_one(".title")
+            # Title extraction
+            title_elem = item.select_one("span[itemprop='name']") or \
+                         item.select_one(".normal") or \
+                         item.select_one("a.ld")
             if not title_elem: continue
-            t_text = title_elem.get_text(strip=True)
+            title = title_elem.get_text(strip=True)
 
-            # 2. Price (Handling ranges like $10.00 - $20.00)
-            price_elem = item.select_one(".search-card-e-price-main") or \
-                         item.select_one("[class*='price']")
+            # Price extraction (Walmart prices are often in a 'current-price' container)
+            price_elem = item.select_one("[data-automation-id='current-price']") or \
+                         item.select_one(".w_iUH7") or \
+                         item.select_one("div.mr1.mr2-sm")
             
-            raw_price = price_elem.get_text(strip=True) if price_elem else "N/A"
-            
-            # Clean price: Keep the first number found
-            price_match = re.search(r"(\d+\.\d{2})", raw_price.replace(",", ""))
-            price_usd = f"${price_match.group(1)}" if price_match else raw_price
+            raw_price = price_elem.get_text(strip=True) if price_elem else ""
+            # Regex to clean up price (extracts $XXX.XX)
+            match = re.search(r"(\$\d+\.\d{2})", raw_price.replace("current price", ""))
+            price_text = match.group(1) if match else raw_price
 
-            # 3. Link & Image
-            link_elem = item.select_one("a")
+            # Link & Image
+            link_elem = item.select_one("a[href*='/ip/']")
+            href = link_elem.get("href", "") if link_elem else ""
+            if href.startswith("/"): href = "https://www.walmart.com" + href
+            
             img_elem = item.select_one("img")
-            
-            # Fix protocol-relative URLs (//)
-            img_url = img_elem.get('src') or img_elem.get('data-src') or ""
-            if img_url.startswith("//"): img_url = "https:" + img_url
-            
-            href = link_elem.get('href', '') if link_elem else ""
-            if href.startswith("//"): href = "https:" + href
+            image = img_elem.get("src") if img_elem else ""
 
-            # AI Analysis
-            label, score = "neutral", 0.0
-            if ai_classifier:
-                res = ai_classifier(t_text[:200], ["positive", "negative", "neutral"])
-                label, score = res['labels'][0], res['scores'][0]
+            if title and price_text:
+                products.append({
+                    "title": title, 
+                    "price": price_text, 
+                    "link": href.split('?')[0],
+                    "image": image, 
+                    "source": "walmart", 
+                    "ai_label": "neutral", 
+                    "ai_score": 0.0
+                })
+        except: continue
+        
+    return products
+
+# ============ BestBuy SCRAPER (WebScraping.ai) ============
+
+async def get_bestbuy_products(keyword: str):
+    url = f"https://www.bestbuy.com/site/searchpage.jsp?st={keyword}"
+    soup = await scrape_with_playwright(url, "bestbuy")
+    
+    if not soup: return []
+
+    products = []
+    # Best Buy uses sku-item-list or specific gallery classes
+    items = soup.select(".sku-item") or \
+            soup.select(".list-item") or \
+            soup.select(".grid-item")
+
+    for item in items:
+        try:
+            # Title
+            title_elem = item.select_one(".sku-title a") or \
+                         item.select_one(".sku-header a")
+            if not title_elem: continue
+            title = title_elem.get_text(strip=True)
+
+            # Price
+            price_elem = item.select_one(".priceView-customer-price span") or \
+                         item.select_one("[class*='priceView-customer-price']")
+            
+            price_text = price_elem.get_text(strip=True) if price_elem else "N/A"
+
+            # Link & Image
+            href = title_elem.get("href", "")
+            if href.startswith("/"): href = "https://www.bestbuy.com" + href
+            
+            img_elem = item.select_one("img.product-image") or item.select_one("img")
+            image = img_elem.get("src") if img_elem else ""
 
             products.append({
-                "title": t_text,
-                "price": price_usd,
-                "link": href,
-                "image": img_url,
-                "source": "alibaba",
-                "ai_label": "neutral",
+                "title": title, 
+                "price": price_text, 
+                "link": href.split('?')[0],
+                "image": image, 
+                "source": "bestbuy", 
+                "ai_label": "neutral", 
                 "ai_score": 0.0
             })
-            if len(products) >= 5: break
-        except Exception as e:
-            print(f"⚠️ Alibaba item skip: {e}")
-            continue
-
-    # 2. BATCH AI ANALYSIS
-    if ai_classifier and products:
-        try:
-            results = ai_classifier([p["title"][:200] for p in products], ["positive", "negative", "neutral"])
-            for i, res in enumerate(results):
-                products[i]["ai_label"] = res["labels"][0]
-                products[i]["ai_score"] = round(res["scores"][0], 4)
-        except:
-            pass
-            
-    print(f"✅ Alibaba: Successfully extracted {len(products)} products")
+        except: continue
+        
     return products
