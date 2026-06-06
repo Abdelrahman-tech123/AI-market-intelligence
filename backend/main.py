@@ -22,8 +22,7 @@ from logic import (
     update_exchange_rates,
     get_amazon_products,
     get_ebay_products,
-    get_walmart_products,
-    get_bestbuy_products,
+    get_btech_products,
     analyze_listing_quality,
     get_average_price
 )
@@ -58,10 +57,9 @@ async def search(keyword: str):
     
     # 1. Scrape all platforms
     results = await asyncio.gather(
-        #get_amazon_products(keyword),
-        #get_ebay_products(keyword),
-        get_walmart_products(keyword),
-        get_bestbuy_products(keyword),
+        get_amazon_products(keyword),
+        get_ebay_products(keyword),
+        get_btech_products(keyword),
         return_exceptions=True
     )
     
