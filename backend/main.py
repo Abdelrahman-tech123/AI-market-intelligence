@@ -11,9 +11,6 @@ if sys.platform == 'win32':
 # Disable tokenizers parallelism to prevent warnings
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
-# to start the server with hot-reload:
-# python run.py --no-reload
-
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,8 +18,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from logic import (
     update_exchange_rates,
     get_amazon_products,
-    get_ebay_products,
-    get_btech_products,
     analyze_listing_quality,
     get_average_price
 )
@@ -55,11 +50,9 @@ async def root():
 async def search(keyword: str):
     print(f"🔍 Deep Analyzing: {keyword}")
     
-    # 1. Scrape all platforms
+    # 1. Scrape structural data from all target endpoints
     results = await asyncio.gather(
         get_amazon_products(keyword),
-        get_ebay_products(keyword),
-        get_btech_products(keyword),
         return_exceptions=True
     )
     
@@ -68,32 +61,32 @@ async def search(keyword: str):
         if isinstance(result, list):
             all_products.extend(result)
 
-    # --- Pass 1: Initial AI Filtering (Identify Accessories/Scams) ---
-    # We pass 0 for avg_price because we don't know it yet
+    # --- Pass 1: Baseline Context Initialization ---
     legit_products_for_avg = []
     
     for product in all_products:
+        # Pre-evaluation context passes an avg_price of 0
         status, _ = analyze_listing_quality(product['title'], product['price'], 0)
         product['ai_status'] = status
         
-        # Only use this product for the average if AI says it's the actual item
+        # Isolate baseline entries to build clean calculations
         if status == "Legit":
             legit_products_for_avg.append(product)
 
-    # --- Pass 2: Calculate CLEAN Market Average ---
-    # This prevents a $5 PS5 sticker from lowering the average of a $500 console
+    # --- Pass 2: Clean Baseline Averaging Execution ---
     avg_market_price = get_average_price(legit_products_for_avg)
-    print(f"📊 Clean Market Average (No Accessories): ${avg_market_price:.2f}")
+    print(f"📊 Clean Market Average: ${avg_market_price:.2f}")
 
-    # --- Pass 3: Final Deal Analysis ---
-    # Now we know the REAL average, we can see who has a good deal
+    # --- Pass 3: Detailed Multi-Dimensional Analysis Engine ---
     for product in all_products:
-        _, deal = analyze_listing_quality(
+        # Execute refined analytical logic using calculated averages
+        _, detail_analysis = analyze_listing_quality(
             product['title'], 
             product['price'], 
             avg_market_price
         )
-        product['ai_deal'] = deal
+        # Nest the complete AI evaluation dictionary directly into the JSON record
+        product['ai_analysis'] = detail_analysis
 
     return {
         "keyword": keyword,

@@ -1,113 +1,249 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import {
-  Search, Loader2, ShoppingCart, TrendingUp, AlertTriangle,
-  CheckCircle, Zap, Info, ExternalLink, BarChart3
+  Search, Loader2, ShoppingCart, AlertTriangle, CheckCircle,
+  Zap, ExternalLink, BarChart3, Layers, Info, ShieldCheck, Sun, Moon
 } from 'lucide-react';
-
-// frontend : npm run dev
-// backend : watchfiles "uvicorn main:app"
 
 function App() {
   const [keyword, setKeyword] = useState('');
-  const [data, setData] = useState({ results: [], market_average: 0 });
+  const [data, setData] = useState({ results: [], market_average: "$0.00", total_found: 0, legit_count: 0 });
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('all');
+  const [statusMessage, setStatusMessage] = useState('');
 
-  const handleSearch = async (e) => {
-    e.preventDefault();
-    if (!keyword) return;
-    setLoading(true);
-    try {
-      const response = await axios.get(`http://127.0.0.1:8000/api/search?keyword=${keyword}`);
-      setData(response.data);
-      setActiveTab('all');
-    } catch (error) {
-      console.error("Error:", error);
-      alert("System Offline");
+  // Theme & Currency States
+  const [darkMode, setDarkMode] = useState(true);
+  const [currency, setCurrency] = useState('USD');
+  const [egpRate, setEgpRate] = useState(47.50);
+
+  // Sync state changes explicitly with HTML root class list to prevent styling crashes
+  useEffect(() => {
+    const root = window.document.documentElement;
+    if (darkMode) {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
     }
-    setLoading(false);
+  }, [darkMode]);
+
+  // Fetch Live USD to EGP Exchange Rate Safely on Mount
+  useEffect(() => {
+    const fetchExchangeRate = async () => {
+      try {
+        const res = await axios.get('https://open.er-api.com/v6/latest/USD');
+        if (res?.data?.rates?.EGP) {
+          setEgpRate(Number(res.data.rates.EGP));
+        }
+      } catch (error) {
+        console.error("Failed to fetch live currency rates, using fallback.", error);
+      }
+    };
+    fetchExchangeRate();
+  }, []);
+
+  // Safe Currency Converter Utility
+  const formatCurrency = (priceStr) => {
+    if (!priceStr) return currency === 'USD' ? '$0.00' : '0.00 EGP';
+    const targetStr = String(priceStr);
+    const cleanedStr = targetStr.replace(/[^0-9.-]+/g, '');
+    const numericValue = parseFloat(cleanedStr);
+
+    if (isNaN(numericValue)) return targetStr;
+
+    try {
+      if (currency === 'EGP') {
+        const converted = numericValue * egpRate;
+        return `${converted.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} EGP`;
+      }
+      return `$${numericValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    } catch (err) {
+      return currency === 'EGP' ? `${(numericValue * egpRate).toFixed(2)} EGP` : `$${numericValue.toFixed(2)}`;
+    }
   };
 
   const filteredResults = activeTab === 'all'
-    ? data.results
-    : data.results.filter(item => item.source === activeTab);
+    ? data?.results || []
+    : (data?.results || []).filter(item => item?.source === activeTab);
 
-  const availableSources = ['all', ...new Set(data.results.map(item => item.source))];
+  const availableSources = ['all', ...new Set((data?.results || []).map(item => item?.source).filter(Boolean))];
+
+  const getValueScoreColor = (score) => {
+    const numScore = Number(score) || 0;
+    if (numScore >= 80) return 'text-emerald-500 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/30';
+    if (numScore >= 50) return 'text-blue-500 dark:text-blue-400 bg-blue-500/10 border-blue-500/30';
+    if (numScore >= 35) return 'text-amber-500 dark:text-amber-400 bg-amber-500/10 border-amber-500/30';
+    return 'text-rose-500 dark:text-rose-400 bg-rose-500/10 border-rose-500/30';
+  };
+
+  const getValueBarColor = (score) => {
+    const numScore = Number(score) || 0;
+    if (numScore >= 80) return 'bg-emerald-500';
+    if (numScore >= 50) return 'bg-blue-500';
+    if (numScore >= 35) return 'bg-amber-500';
+    return 'bg-rose-500';
+  };
 
   return (
-    <div className="min-h-screen bg-[#020617] text-slate-100 font-sans selection:bg-blue-500/30">
+    <div className={`min-h-screen font-sans selection:bg-indigo-500/30 antialiased transition-colors duration-300 ${darkMode ? 'bg-[#030712] text-slate-100' : 'bg-slate-50 text-slate-800'
+      }`}>
+
       {/* Navigation */}
-      <nav className="border-b border-slate-800 bg-[#020617]/80 backdrop-blur-xl sticky top-0 z-50 p-4">
+      <nav className={`border-b sticky top-0 z-50 p-4 backdrop-blur-md transition-colors ${darkMode ? 'border-slate-900 bg-[#030712]/70 text-white' : 'border-slate-200 bg-white/70 text-slate-800'
+        }`}>
         <div className="max-w-7xl mx-auto flex justify-between items-center">
-          <div className="flex items-center gap-2 font-black text-2xl tracking-tighter text-white">
-            <div className="bg-blue-600 p-1.5 rounded-lg">
-              <Zap size={24} fill="white" />
+          <div className="flex items-center gap-2.5 font-black text-2xl tracking-tighter">
+            <div className="bg-gradient-to-tr from-amber-500 to-orange-600 p-2 rounded-xl shadow-lg shadow-orange-500/20">
+              <Zap size={22} fill="white" className="text-white" />
             </div>
-            <span>CORE<span className="text-blue-700 ">AI</span></span>
+            <span>AMAI<span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-orange-500">.ENG</span></span>
           </div>
+
           <div className="flex items-center gap-4">
-            <div className="hidden md:flex items-center gap-2 px-3 py-1 bg-slate-900 border border-slate-800 rounded-full text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-              <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-              BART-Large-MNLI Active
+            <button
+              onClick={() => setCurrency(prev => prev === 'USD' ? 'EGP' : 'USD')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${darkMode ? 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800' : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
+                }`}
+              title={`Current Rate: 1 USD = ${egpRate.toFixed(2)} EGP`}
+            >
+              Convert to {currency === 'USD' ? 'EGP' : 'USD'}
+            </button>
+
+            <button
+              onClick={() => setDarkMode(!darkMode)}
+              className={`p-2 rounded-lg transition-all border ${darkMode ? 'bg-slate-900 border-slate-800 text-amber-400 hover:bg-slate-800' : 'bg-slate-100 border-slate-200 text-indigo-600 hover:bg-slate-200'
+                }`}
+            >
+              {darkMode ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+
+            <div className={`hidden sm:flex items-center gap-2 px-3.5 py-1.5 border rounded-full text-[10px] font-bold uppercase tracking-widest ${darkMode ? 'bg-slate-900 border-slate-800 text-slate-400' : 'bg-slate-100 border-slate-200 text-slate-500'
+              }`}>
+              <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
+              BART Analysis Active
             </div>
           </div>
         </div>
       </nav>
 
-      <main className="max-w-7xl mx-auto px-4 pt-12 pb-20">
-        {/* Hero & Search */}
-        <div className="text-center mb-12">
-          <h1 className="text-4xl md:text-6xl font-black mb-4 tracking-tight">
-            Market <span className="text-blue-500">Intelligence</span>
+      <main className="max-w-7xl mx-auto px-4 pt-16 pb-24">
+        {/* Hero Banner Section */}
+        <div className="text-center mb-16">
+          <h1 className={`text-4xl sm:text-6xl font-black mb-4 tracking-tight ${darkMode ? 'text-white' : 'text-slate-900'}`}>
+            AMAI <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-orange-500 to-yellow-400">Market Intelligence</span>
           </h1>
-          <p className="text-slate-400 text-sm md:text-base max-w-xl mx-auto">
-            Real-time cross-platform scraping with Zero-Shot AI for deal quality and scam detection.
+          <p className={`text-sm sm:text-base max-w-xl mx-auto font-medium ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+            Cross-platform comparative analysis driven by semantic machine learning logic.
           </p>
 
-          <form onSubmit={handleSearch} className="mt-8 flex gap-2 justify-center max-w-2xl mx-auto relative">
-            <input
-              type="text"
-              placeholder="Search products (e.g. RTX 4090, iPhone 15)..."
-              className="w-full bg-slate-900/80 border border-slate-700 p-4 pl-6 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder:text-slate-600 shadow-2xl"
-              onChange={(e) => setKeyword(e.target.value)}
-            />
+          <form onSubmit={async (e) => {
+            e.preventDefault();
+            if (!keyword) return;
+
+            setLoading(true);
+            // Phase 1: Initiation
+            setStatusMessage('Searching marketplaces...');
+
+            // Start a minor artificial delay mechanism to ensure the user perceives the steps
+            const statusTimer = setTimeout(() => {
+              setStatusMessage('Analyzing with AI (BART Engine)...');
+            }, 1200);
+
+            try {
+              const response = await axios.get(`http://127.0.0.1:8000/api/search?keyword=${keyword}`);
+
+              // Phase 3: Compilation
+              clearTimeout(statusTimer);
+              setStatusMessage('Finishing & formatting assets...');
+
+              // Brief pause so they see the finish state before layout populates
+              await new Promise(resolve => setTimeout(resolve, 600));
+
+              setData(response.data || { results: [], market_average: "$0.00", total_found: 0, legit_count: 0 });
+              setActiveTab('all');
+            } catch (error) {
+              clearTimeout(statusTimer);
+              console.error("Error:", error);
+              alert("System Offline");
+            } finally {
+              setLoading(false);
+              setStatusMessage(''); // Reset state
+            }
+          }} className="mt-10 flex gap-3 justify-center max-w-2xl mx-auto relative">
+            <div className="relative w-full">
+              <input
+                type="text"
+                placeholder="Search for tech products (e.g. RTX 4090, M3 Macbook Air)..."
+                className={`w-full border p-4 pl-6 rounded-2xl focus:ring-2 focus:ring-red-500 outline-none transition-all font-medium backdrop-blur-sm shadow-xl ${darkMode
+                  ? 'bg-slate-900/60 border-slate-800/80 text-slate-200 placeholder:text-slate-600 focus:border-red-300'
+                  : 'bg-white/80 border-slate-200 text-slate-800 placeholder:text-slate-400 focus:border-red-500'
+                  }`}
+                onChange={(e) => setKeyword(e.target.value)}
+              />
+            </div>
             <button
               disabled={loading}
-              className="bg-blue-600 hover:bg-blue-500 text-white px-6 rounded-2xl font-bold flex items-center gap-2 transition-all disabled:opacity-50"
+              className="bg-red-600 hover:bg-red-500 active:scale-[0.98] text-white px-7 rounded-2xl font-bold flex items-center gap-2 transition-all disabled:opacity-50 shadow-lg shadow-white-600/20 shrink-0"
             >
-              {loading ? <Loader2 className="animate-spin" /> : <Search size={20} />}
-              <span className="hidden md:inline">Analyze</span>
+              {loading ? <Loader2 className="animate-spin" size={20} /> : <Search size={20} />}
+              <span>Analyze</span>
             </button>
           </form>
         </div>
 
-        {/* Global Market Stats */}
-        {data.results.length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-10">
-            <div className="bg-blue-600/10 border border-blue-500/20 p-4 rounded-2xl flex items-center gap-4">
-              <div className="bg-blue-600/20 p-3 rounded-xl text-blue-400">
-                <BarChart3 size={24} />
+        {/* Global Analytics Overview Panel */}
+        {data?.results?.length > 0 && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 mb-12">
+            <div className={`border p-5 rounded-2xl flex items-center gap-4 backdrop-blur-sm ${darkMode ? 'bg-slate-900/40 border-slate-800/60' : 'bg-white border-slate-200 shadow-sm'}`}>
+              <div className="bg-indigo-500/10 p-3 rounded-xl text-indigo-500 border border-indigo-500/10">
+                <BarChart3 size={22} />
               </div>
               <div>
-                <p className="text-[10px] uppercase font-bold text-blue-400 tracking-wider">Market Average</p>
-                <p className="text-2xl font-black text-white">{data.market_average}</p>
+                <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Indexed Clean Average</p>
+                <p className={`text-2xl font-black mt-0.5 ${darkMode ? 'text-white' : 'text-slate-900'}`}>
+                  {formatCurrency(data?.market_average)}
+                </p>
               </div>
             </div>
-            {/* Add more stats cards here if needed */}
+
+            <div className={`border p-5 rounded-2xl flex items-center gap-4 backdrop-blur-sm ${darkMode ? 'bg-slate-900/40 border-slate-800/60' : 'bg-white border-slate-200 shadow-sm'}`}>
+              <div className="bg-emerald-500/10 p-3 rounded-xl text-emerald-500 border border-emerald-500/10">
+                <ShieldCheck size={22} />
+              </div>
+              <div>
+                <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Legitimate Devices</p>
+                <p className={`text-2xl font-black mt-0.5 ${darkMode ? 'text-white' : 'text-slate-900'}`}>
+                  {data?.legit_count || 0} <span className="text-xs font-medium text-slate-400">verified</span>
+                </p>
+              </div>
+            </div>
+
+            <div className={`border p-5 rounded-2xl flex items-center gap-4 backdrop-blur-sm ${darkMode ? 'bg-slate-900/40 border-slate-800/60' : 'bg-white border-slate-200 shadow-sm'}`}>
+              <div className="bg-violet-500/10 p-3 rounded-xl text-violet-500 border border-violet-500/10">
+                <Layers size={22} />
+              </div>
+              <div>
+                <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Total Listings Processed</p>
+                <p className={`text-2xl font-black mt-0.5 ${darkMode ? 'text-white' : 'text-slate-900'}`}>
+                  {data?.total_found || 0} <span className="text-xs font-medium text-slate-400">items</span>
+                </p>
+              </div>
+            </div>
           </div>
         )}
 
-        {/* Filters */}
-        {data.results.length > 0 && (
-          <div className="flex items-center gap-2 mb-8 overflow-x-auto pb-2 no-scrollbar">
+        {/* Platform Origin Filter Tabs */}
+        {data?.results?.length > 0 && (
+          <div className={`flex items-center gap-2 mb-8 overflow-x-auto pb-2 border-b ${darkMode ? 'border-slate-900' : 'border-slate-200'}`}>
             {availableSources.map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`px-5 py-2 rounded-xl text-xs font-bold capitalize transition-all whitespace-nowrap border ${activeTab === tab
-                  ? 'bg-white text-black border-white'
-                  : 'bg-slate-900 text-slate-400 border-slate-800 hover:border-slate-600'
+                className={`px-5 py-2 rounded-xl text-xs font-bold capitalize transition-all border ${activeTab === tab
+                  ? 'bg-gradient-to-r from-indigo-600 to-indigo-500 text-white border-indigo-500 shadow-md shadow-indigo-600/10'
+                  : darkMode
+                    ? 'bg-slate-900/60 text-slate-400 border-slate-800/80 hover:text-slate-200'
+                    : 'bg-white text-slate-500 border-slate-200 hover:text-slate-800 shadow-sm'
                   }`}
               >
                 {tab}
@@ -116,86 +252,169 @@ function App() {
           </div>
         )}
 
-        {/* Results Grid */}
+        {/* Dynamic Card Architecture Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredResults.map((product, index) => (
-            <div
-              key={index}
-              className={`group relative bg-slate-900/50 border rounded-3xl overflow-hidden transition-all duration-300 hover:shadow-2xl hover:shadow-blue-500/5 ${product.ai_status === '🚩 Flagged' ? 'border-rose-500/30' : 'border-slate-800 hover:border-slate-600'
-                }`}
-            >
-              {/* Image Section */}
-              <div className="relative h-56 bg-white/5 p-6 flex items-center justify-center overflow-hidden border-b border-slate-800">
-                <img
-                  src={product.image || "https://via.placeholder.com/150"}
-                  className="h-full object-contain group-hover:scale-105 transition-transform duration-500"
-                  alt={product.title}
-                />
+          {filteredResults.map((product, index) => {
+            // 1. Normalize data by checking nested ai_analysis OR falling back to root-level backend fields
+            const analysis = {
+              status: product?.ai_analysis?.status || product?.ai_status || 'Unknown',
+              badge: product?.ai_analysis?.badge || product?.ai_deal || 'Standard',
+              value_score: Number(product?.ai_analysis?.value_score) || (product?.value_score ? Number(product.value_score) : 50),
+              opinion: product?.ai_analysis?.opinion || product?.ai_opinion || 'No analysis available.',
+              specs: product?.ai_analysis?.specs || product?.specs || {}
+            };
 
-                {/* Source Badge */}
-                <div className="absolute top-4 left-4 bg-black/80 backdrop-blur-md text-[9px] font-black px-2.5 py-1 rounded-lg border border-white/10 text-white uppercase tracking-tighter">
-                  {product.source}
-                </div>
+            // 2. Determine flag state cleanly
+            const isFlagged = analysis.status.includes('Flagged') || analysis.status.includes('🚩');
 
-                {/* AI Deal Badge */}
-                <div className={`absolute top-4 right-4 text-[10px] font-bold px-3 py-1 rounded-lg shadow-2xl backdrop-blur-md border ${product.ai_deal.includes('Steal') ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' :
-                  product.ai_deal.includes('Suspicious') ? 'bg-rose-500/20 text-rose-400 border-rose-500/30' :
-                    product.ai_deal.includes('Premium') ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' :
-                      'bg-blue-500/20 text-blue-400 border-blue-500/30'
-                  }`}>
-                  {product.ai_deal}
-                </div>
-              </div>
-
-              {/* Info Section */}
-              <div className="p-6">
-                <div className="flex items-start justify-between gap-4 mb-2">
-                  <h3 className="font-bold text-slate-100 text-sm line-clamp-2 leading-relaxed h-10">
-                    {product.title}
-                  </h3>
-                </div>
-
-                <div className="flex items-baseline gap-2 mt-4">
-                  <span className="text-2xl font-black text-white">{product.price}</span>
-                </div>
-
-                <div className="mt-6 flex items-center justify-between">
-                  {/* Status Indicator */}
-                  <div className={`flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-md ${product.ai_status === 'Legit' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'
+            return (
+              <div
+                key={index}
+                className={`border rounded-2xl overflow-hidden flex flex-col justify-between transition-all duration-300 backdrop-blur-sm hover:-translate-y-0.5 ${isFlagged
+                  ? 'border-rose-500/20 hover:border-rose-500/40 bg-rose-950/5'
+                  : darkMode
+                    ? 'bg-slate-900/20 border-slate-800/60 hover:border-slate-700 hover:shadow-xl'
+                    : 'bg-white border-slate-200 shadow-sm hover:border-slate-300 hover:shadow-md'
+                  }`}
+              >
+                <div>
+                  {/* Media Window */}
+                  <div className={`relative h-52 p-6 flex items-center justify-center overflow-hidden border-b ${darkMode ? 'bg-white/[0.02] border-slate-900' : 'bg-slate-100/50 border-slate-200'
                     }`}>
-                    {product.ai_status === 'Legit' ? <CheckCircle size={12} /> : <AlertTriangle size={12} />}
-                    {product.ai_status}
+                    <img
+                      src={product?.image || "https://via.placeholder.com/150"}
+                      className={`h-full object-contain opacity-95 transition-transform duration-500 ${darkMode ? 'mix-blend-lighten' : 'mix-blend-multiply'
+                        }`}
+                      alt={product?.title || 'Product'}
+                    />
+
+                    {/* Platform Label */}
+                    <div className={`absolute top-3.5 left-3.5 backdrop-blur-md text-[9px] font-black px-2.5 py-1 rounded-lg border uppercase tracking-wider ${darkMode ? 'bg-slate-950/80 border-slate-800 text-slate-300' : 'bg-white/90 border-slate-200 text-slate-600 shadow-sm'
+                      }`}>
+                      {product?.source || 'unknown'}
+                    </div>
+
+                    {/* Deal Quality Label */}
+                    <div className={`absolute top-3.5 right-3.5 text-[10px] font-extrabold px-2.5 py-1 rounded-lg shadow-xl border ${getValueScoreColor(analysis.value_score)}`}>
+                      {analysis.badge}
+                    </div>
                   </div>
 
-                  <a
-                    href={product.link}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1 text-[10px] font-bold text-blue-400 hover:text-blue-300 transition-colors uppercase tracking-widest"
-                  >
-                    Details <ExternalLink size={12} />
-                  </a>
+                  {/* Content Details */}
+                  <div className="p-5 pb-2">
+                    <h3 className={`font-semibold text-sm line-clamp-2 leading-relaxed h-10 ${darkMode ? 'text-slate-200' : 'text-slate-800'
+                      }`}>
+                      {product?.title || ''}
+                    </h3>
+
+                    {/* Dynamic AI Technical Spec Tags */}
+                    <div className="flex flex-wrap gap-1.5 mt-3 min-h-6">
+                      {analysis.specs?.cpu && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-500/10 text-indigo-500 border border-indigo-500/10">{analysis.specs.cpu}</span>
+                      )}
+                      {analysis.specs?.ram && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-500 border border-blue-500/10">{analysis.specs.ram}</span>
+                      )}
+                      {analysis.specs?.storage && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-violet-500/10 text-violet-400 border border-violet-500/10">{analysis.specs.storage}</span>
+                      )}
+                    </div>
+
+                    <div className="flex items-baseline gap-2 mt-4">
+                      <span className={`text-2xl font-black tracking-tight ${darkMode ? 'text-white' : 'text-slate-900'}`}>
+                        {formatCurrency(product?.price)}
+                      </span>
+                    </div>
+
+                    {/* Value Analysis Interface Meter */}
+                    <div className={`mt-4 pt-4 border-t ${darkMode ? 'border-slate-900' : 'border-slate-100'}`}>
+                      <div className="flex justify-between items-center text-[10px] font-bold mb-1.5 text-slate-400">
+                        <span className="uppercase tracking-wider flex items-center gap-1"><Info size={11} /> Value Score</span>
+                        <span className={`font-mono ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>{analysis.value_score}/100</span>
+                      </div>
+                      <div className={`w-full rounded-full h-1.5 overflow-hidden border ${darkMode ? 'bg-slate-950 border-slate-900' : 'bg-slate-100 border-slate-200'}`}>
+                        <div
+                          className={`h-full transition-all duration-500 ${getValueBarColor(analysis.value_score)}`}
+                          style={{ width: `${analysis.value_score}%` }}
+                        />
+                      </div>
+                      <p className={`text-[11px] font-medium mt-2 leading-relaxed line-clamp-2 italic ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                        "{analysis.opinion}"
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Action Row */}
+                <div className="p-5 pt-2">
+                  <div className="mt-2 flex items-center justify-between">
+                    <div className={`flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-lg border ${analysis.status.includes('Legit')
+                      ? 'bg-emerald-500/5 text-emerald-500 border-emerald-500/10'
+                      : 'bg-rose-500/5 text-rose-500 border-rose-500/10'
+                      }`}>
+                      {analysis.status.includes('Legit') ? <CheckCircle size={12} /> : <AlertTriangle size={12} />}
+                      {analysis.status}
+                    </div>
+
+                    <a
+                      href={product?.link || '#'}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`flex items-center gap-1 text-[10px] font-bold transition-colors uppercase tracking-widest px-3 py-1.5 rounded-lg border ${darkMode
+                        ? 'text-indigo-400 hover:text-indigo-300 bg-slate-950 border-slate-900'
+                        : 'text-indigo-600 hover:text-indigo-700 bg-slate-50 border-slate-200 shadow-sm'
+                        }`}
+                    >
+                      View Link <ExternalLink size={11} />
+                    </a>
+                  </div>
                 </div>
               </div>
-
-              {/* Warning Overlay for Flagged items */}
-              {product.ai_status === '🚩 Flagged' && (
-                <div className="absolute inset-0 bg-rose-950/10 pointer-events-none" />
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
 
-        {/* Empty State */}
-        {data.results.length === 0 && !loading && (
-          <div className="text-center py-24 border-2 border-dashed border-slate-800 rounded-[3rem] bg-slate-900/20">
-            <div className="bg-slate-800 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6">
-              <ShoppingCart className="text-slate-500" size={32} />
+        {/* Empty Search Prompt Base */}
+        {(data?.results?.length === 0 || !data?.results) && !loading && (
+          <div className={`text-center py-28 border border-dashed rounded-3xl max-w-3xl mx-auto mt-6 backdrop-blur-sm ${darkMode ? 'border-slate-800/80 bg-slate-900/10' : 'border-slate-300 bg-white shadow-sm'
+            }`}>
+            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-5 border ${darkMode ? 'bg-slate-900/60 border-slate-800 text-slate-500' : 'bg-slate-50 border-slate-200 text-slate-400'
+              }`}>
+              <ShoppingCart size={24} />
             </div>
-            <h3 className="text-xl font-bold text-white mb-2">No Market Data Yet</h3>
-            <p className="text-slate-500 text-sm max-w-xs mx-auto">
-              Enter a product keyword above to start the AI scraping process.
+            <h3 className={`text-lg font-bold mb-1 ${darkMode ? 'text-slate-200' : 'text-slate-800'}`}>Analytical Sandbox Empty</h3>
+            <p className={`text-xs max-w-xs mx-auto leading-relaxed ${darkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+              Input a focal target parameter keyword into the analyzer cluster above to trigger live system loops.
             </p>
+          </div>
+        )}
+
+        {/* Dynamic Loading Progress Architecture */}
+        {loading && (
+          <div className="max-w-2xl mx-auto mt-8 animate-fade-in">
+            <div className="flex justify-between items-center mb-2.5 text-xs font-bold tracking-wide uppercase">
+              <span className="flex items-center gap-2 text-indigo-500">
+                <Loader2 className="animate-spin text-amber-500" size={14} />
+                {statusMessage}
+              </span>
+              <span className={`font-mono ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                {statusMessage.includes('Searching') && '35%'}
+                {statusMessage.includes('Analyzing') && '75%'}
+                {statusMessage.includes('Finishing') && '95%'}
+              </span>
+            </div>
+
+            <div className={`w-full rounded-full h-2 overflow-hidden p-[1px] border ${darkMode ? 'bg-slate-950 border-slate-900' : 'bg-slate-200/60 border-slate-300/40'
+              }`}>
+              <div
+                className="h-full bg-gradient-to-r from-amber-500 via-orange-500 to-indigo-600 rounded-full transition-all duration-700 ease-out shadow-sm"
+                style={{
+                  width: statusMessage.includes('Searching') ? '35%' :
+                    statusMessage.includes('Analyzing') ? '75%' :
+                      statusMessage.includes('Finishing') ? '98%' : '0%'
+                }}
+              />
+            </div>
           </div>
         )}
       </main>
