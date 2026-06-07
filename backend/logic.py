@@ -1,20 +1,27 @@
 import re
-import asyncio
+import os
 import httpx
 from urllib.parse import quote_plus
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 from playwright_stealth import Stealth
 from transformers import pipeline
+from dotenv import load_dotenv
 
 CURRENT_RATE = 48.50
+load_dotenv()
+DEBUG_MODE = os.getenv("DEBUG_MODE", "True") == "True"
+
+def debug_print(*args, **kwargs):
+    if DEBUG_MODE:
+        print(*args, **kwargs)
 
 # Enhanced AI Suite
 try:
     classifier = pipeline("zero-shot-classification", model="facebook/bart-large-mnli")  # type: ignore
     sentiment_analyzer = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")  # type: ignore
 except Exception as e:
-    print(f"AI Loading Error: {e}")
+    debug_print(f"AI Loading Error: {e}")
     classifier = None
     sentiment_analyzer = None
     
@@ -26,6 +33,46 @@ def extract_specs(title):
         "cpu": re.search(r'(i3|i5|i7|i9|Ryzen \d|M1|M2|M3)', title, re.I)
     }
     return {k: v.group(0) if v else None for k, v in specs.items()}
+
+def exchange_usd_egp(price_str):
+    """Convert price string from EGP to USD if necessary."""
+    if not price_str or price_str == "N/A":
+        return 0.0
+    try:
+        # Strip currency symbols and commas to isolate numbers cleanly
+        raw_numeric = re.sub(r'[^\d.]', '', price_str.replace(',', ''))
+        if not raw_numeric:
+            return 0.0
+        numeric_value = float(raw_numeric)
+        
+        if "EGP" in price_str or "ج.m" in price_str or "ج.م" in price_str:
+            return numeric_value / CURRENT_RATE
+        return numeric_value
+    except Exception:
+        return 0.0
+
+def convert_to_usd(price_str):
+    """Formats raw price strings cleanly into a USD string."""
+    price_value = exchange_usd_egp(price_str)
+    return f"${price_value:.2f}" if price_value > 0 else "N/A"
+
+def get_average_price(products):
+    """Calculates the baseline USD price for the current search results."""
+    prices = []
+    for p in products:
+        try:
+            price_str = str(p.get('price', '')).replace(",", "")
+            # Safely grab the absolute raw digits out of the string structure
+            match = re.search(r"\d+\.?\d*", price_str)
+            if not match:
+                continue
+            
+            val = float(match.group())
+            if val > 0:
+                prices.append(val)
+        except Exception:
+            continue
+    return sum(prices) / len(prices) if prices else 0.0
 
 def analyze_listing_quality(title, price_usd, avg_price):
     """
@@ -46,7 +93,7 @@ def analyze_listing_quality(title, price_usd, avg_price):
 
     try:
         price = float(price_usd.replace("$", "").replace(",", ""))
-    except:
+    except Exception:
         analysis["status"] = "Unknown"
         return analysis["status"], analysis
 
@@ -64,10 +111,10 @@ def analyze_listing_quality(title, price_usd, avg_price):
                 analysis["status"] = "⚠️ Component"
                 analysis["opinion"] = "This appears to be an accessory or individual component part."
         except Exception as ai_err:
-            print(f"Classifier error: {ai_err}")
+            debug_print(f"Classifier error: {ai_err}")
 
     # 2. Advanced Pricing Logic
-    if avg_price > 0:
+    if avg_price > 0 and analysis["status"] == "Legit":
         ratio = price / avg_price
         
         if ratio < 0.5:
@@ -98,25 +145,6 @@ def analyze_listing_quality(title, price_usd, avg_price):
 
     return analysis["status"], analysis
 
-def get_average_price(products):
-    """Calculates the baseline USD price for the current search results."""
-    prices = []
-    for p in products:
-        try:
-            price_str = str(p['price']).replace(",", "")
-            match = re.search(r"[-+]?\d*\.\d+|\d+", price_str)
-            if not match:
-                continue
-            
-            val = float(match.group())
-            if "EGP" in price_str or "ج.م" in price_str:
-                val = val / CURRENT_RATE
-                
-            prices.append(val)
-        except Exception:
-            continue
-    return sum(prices) / len(prices) if prices else 0.0
-
 async def update_exchange_rates():
     """Fetches real-time EGP exchange rate from API."""
     global CURRENT_RATE
@@ -129,30 +157,12 @@ async def update_exchange_rates():
             
             if data.get("result") == "success":
                 CURRENT_RATE = data["rates"]["EGP"]
-                print(f"🚀 Real-time Currency Sync: 1 USD = {CURRENT_RATE:.2f} EGP")
+                debug_print(f"🚀 Real-time Currency Sync: 1 USD = {CURRENT_RATE:.2f} EGP")
             else:
-                print("⚠️ API returned an error, using fallback.")
+                debug_print("⚠️ API returned an error, using fallback.")
     except Exception as e:
-        print(f"❌ Currency API unreachable: {e}. Using fallback {CURRENT_RATE}")
+        debug_print(f"❌ Currency API unreachable: {e}. Using fallback {CURRENT_RATE}")
 
-def exchange_usd_egp(price_str):
-    """Convert price string from EGP to USD if necessary."""
-    try:
-        raw_numeric = re.sub(r'[^\d.]', '', price_str.replace(',', ''))
-        if not raw_numeric:
-            return 0.0
-        numeric_value = float(raw_numeric)
-        
-        if "EGP" in price_str or "ج.m" in price_str or "ج.م" in price_str:
-            return numeric_value / CURRENT_RATE
-        return numeric_value
-    except Exception:
-        return 0.0
-
-def convert_to_usd(price_str):
-    """Formats raw price strings cleanly into a USD string."""
-    price_value = exchange_usd_egp(price_str)
-    return f"${price_value:.2f}" if price_value > 0 else None
 
 # ============ PLAYWRIGHT CONFIGURATION ============
 SOURCE_READY_SELECTORS = {
@@ -182,7 +192,7 @@ async def _navigate_and_capture(page, url, source):
             if selectors:
                 matched = await _wait_for_any_selector(page, selectors, timeout=12000)
                 if matched:
-                    print(f"✅ {source}: ready selector matched: {matched}")
+                    debug_print(f"✅ {source}: ready selector matched: {matched}")
             await page.wait_for_timeout(2000)
             return await page.content()
         except PlaywrightTimeoutError:
@@ -205,22 +215,32 @@ async def _block_nonessential_assets(route):
 
 # ============ AMAZON SCRAPER ============
 async def get_amazon_products(keyword: str, max_results: int = 25):
-    """
-    Fetches up to `max_results` products across multiple pages.
-    Intelligently bypasses accessory filters if the user is explicitly searching for one.
-    """
     unwanted_keywords = [
         "case", "cover", "sleeve", "charger", "adapter", "cable", "cord", 
-        "bag", "backpack", "stand", "hub", "dock", "screen protector", "sticker"
+        "bag", "backpack", "stand", "hub", "dock", "screen protector", "sticker",
+        "soonjet", "mosiso", "blueswan", "skin", "decal", "shell", "pouch", 
+        "holster", "strap", "band", "bumper", "film", "tempered glass", 
+        "keyboard cover", "tote", "briefcase", "power bank", "power strip", 
+        "extension", "plug", "brick", "wire", "connector", "splitter", 
+        "converter", "dongle", "extension cord", "lightning cable", "usb-c cable", 
+        "hdmi", "displayport", "ethernet", "mount", "holder", "cradle", "tripod", 
+        "monopod", "desk mat", "mouse pad", "cooling pad", "riser", "arm", 
+        "bracket", "organizer", "rack", "shelf", "cleaning kit", "wipe", "brush", 
+        "repair tool", "screwdriver", "thermal paste", "replacement screen", 
+        "replacement battery", "keycap", "switch opener", "spigen", "esr", 
+        "jetech", "ugreen", "anker", "procase", "tomtoc", "kinmac", "supcase", 
+        "i-blason", "lacdo", "moko", "fintie", "kwmobile", "ti決o", "only case", 
+        "case only", "not included", "device not included", "pack of", "pieces", 
+        "replacement for", "compatible with", "designed for"
     ]
     
     keyword_lower = keyword.lower()
     searching_for_accessory = any(unwanted in keyword_lower for unwanted in unwanted_keywords)
     
     if searching_for_accessory:
-        print("💡 User is searching for an accessory. Disabling strict accessory block.")
+        debug_print("💡 User is searching for an accessory. Disabling strict accessory block.")
     else:
-        print("🔒 User is searching for a main device. Strict accessory block is ACTIVE.")
+        debug_print("🔒 User is searching for a main device. Strict accessory block is ACTIVE.")
 
     products = []
     current_page = 1
@@ -242,7 +262,7 @@ async def get_amazon_products(keyword: str, max_results: int = 25):
         await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
         while len(products) < max_results and current_page <= max_pages:
-            print(f"🔍 Crawling Amazon page {current_page}... (Collected: {len(products)}/{max_results})")
+            debug_print(f"🔍 Crawling Amazon page {current_page}... (Collected: {len(products)}/{max_results})")
             
             url = f"https://www.amazon.com/s?k={quote_plus(keyword)}&page={current_page}"
             page = await context.new_page()
@@ -253,7 +273,6 @@ async def get_amazon_products(keyword: str, max_results: int = 25):
 
             html = await _navigate_and_capture(page, url, "amazon")
             if not html:
-                print(f"⚠️ Failed to get HTML for page {current_page}")
                 await page.close()
                 break
 
@@ -271,7 +290,6 @@ async def get_amazon_products(keyword: str, max_results: int = 25):
                 items = soup.select("[data-cel-widget^='search_result_']")
 
             if not items:
-                print("🛑 No more raw item boxes found on this page. Stopping.")
                 break
 
             for item in items:
@@ -303,7 +321,7 @@ async def get_amazon_products(keyword: str, max_results: int = 25):
                                 break
                         elif "EGP" in text or "ج.م" in text:
                             converted = convert_to_usd(text)
-                            if converted:
+                            if converted and converted != "N/A":
                                 price_usd = converted
                                 break
                     
@@ -340,5 +358,5 @@ async def get_amazon_products(keyword: str, max_results: int = 25):
 
         await browser.close()
 
-    print(f"✅ Amazon: Extracted {len(products)} products total.")
+    debug_print(f"✅ Amazon: Extracted {len(products)} products total.")
     return products

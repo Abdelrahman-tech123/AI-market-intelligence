@@ -50,7 +50,7 @@ def on_reload(changes) -> None:
     changed_files = sorted(set(changed_files))
     preview = ", ".join(changed_files[:5])
     suffix = "..." if len(changed_files) > 5 else ""
-    print(f"Reloading after changes: {preview}{suffix}")
+    debug_print(f"Reloading after changes: {preview}{suffix}")
 
 
 def main() -> None:
@@ -73,11 +73,11 @@ def main() -> None:
     try:
         from watchfiles import run_process
     except ImportError:
-        print("watchfiles is not installed; starting without auto-reload.")
+        debug_print("watchfiles is not installed; starting without auto-reload.")
         serve()
         return
 
-    print(f"Watching {BASE_DIR} for changes...")
+    debug_print(f"Watching {BASE_DIR} for changes...")
     run_process(
         str(BASE_DIR),
         target=serve,

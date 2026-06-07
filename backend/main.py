@@ -1,14 +1,12 @@
 import sys
 import asyncio
 import os
+from dotenv import load_dotenv
 
-# Force Proactor Event Loop on Windows BEFORE importing anything async
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-    import os
     os.environ['PYTHONPATH'] = os.getcwd()
 
-# Disable tokenizers parallelism to prevent warnings
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
 from contextlib import asynccontextmanager
@@ -22,24 +20,41 @@ from logic import (
     get_average_price
 )
 
+load_dotenv()
+DEBUG_MODE = os.getenv("DEBUG_MODE", "True") == "True"
+
+def debug_print(*args, **kwargs):
+    if DEBUG_MODE:
+        print(*args, **kwargs)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print(f"🚀 AI Market Intelligence: ONLINE")
+    debug_print(f"🚀 AI Market Intelligence: ONLINE")
     try:
         await update_exchange_rates()
-        print("✅ Exchange rates updated.")
+        debug_print("✅ Exchange rates updated successfully.")
     except Exception as e:
-        print(f"⚠️ Exchange rate sync failed: {e}")
+        debug_print(f"⚠️ Exchange rate sync failed: {e}")
     yield
-    print("🛑 Server shutting down...")
+    debug_print("🛑 Server shutting down...")
 
 app = FastAPI(lifespan=lifespan)
 
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",                  
+    "http://127.0.0.1:3000",                  
+]
+
+production_url = os.getenv("REACT_PUBLIC_BASE_URL")
+if production_url:
+    ALLOWED_ORIGINS.append(production_url.strip().rstrip("/"))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS, 
+    allow_credentials=True,                   
+    allow_methods=["*"],                      
+    allow_headers=["*"],                      
 )
 
 @app.get("/")
@@ -48,9 +63,8 @@ async def root():
 
 @app.get("/api/search")
 async def search(keyword: str):
-    print(f"🔍 Deep Analyzing: {keyword}")
+    debug_print(f"🔍 Deep Analyzing: {keyword}")
     
-    # 1. Scrape structural data from all target endpoints
     results = await asyncio.gather(
         get_amazon_products(keyword),
         return_exceptions=True
@@ -65,37 +79,29 @@ async def search(keyword: str):
     legit_products_for_avg = []
     
     for product in all_products:
-        # Pre-evaluation context passes an avg_price of 0 to isolate layout validity
         status, _ = analyze_listing_quality(product['title'], product['price'], 0)
-        
-        # Populate flat fallback for initial evaluation tracking
         product['ai_status'] = status
         
-        # Isolate baseline entries to build clean calculations
-        if status == "Legit":
+        # Collect items for averaging (Accept both Legit status types or components if needed)
+        if "Legit" in status or "Component" in status:
             legit_products_for_avg.append(product)
 
     # --- Pass 2: Clean Baseline Averaging Execution ---
     avg_market_price = get_average_price(legit_products_for_avg)
-    print(f"📊 Clean Market Average: ${avg_market_price:.2f}")
+    debug_print(f"📊 Clean Market Average: ${avg_market_price:.2f}")
 
     # --- Pass 3: Detailed Multi-Dimensional Analysis Engine ---
     for product in all_products:
-        # Execute refined analytical logic using calculated averages
         _, detail_analysis = analyze_listing_quality(
             product['title'], 
             product['price'], 
             avg_market_price
         )
         
-        # 🌟 FIXED: Flatten individual analysis properties to the base object level 
-        # This fixes the missing data streams appearing in your Postman results.
         product['ai_status'] = detail_analysis.get("status", "Unknown")
         product['ai_deal'] = detail_analysis.get("badge", "Standard")
         product['value_score'] = detail_analysis.get("value_score", 50)
         product['opinion'] = detail_analysis.get("opinion", "No analysis available.")
-        
-        # Keep the nested structure intact for complete technical specification tracking
         product['ai_analysis'] = detail_analysis
 
     return {

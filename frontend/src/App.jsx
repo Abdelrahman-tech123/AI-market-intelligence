@@ -6,6 +6,8 @@ import {
 } from 'lucide-react';
 
 function App() {
+  const api_baseURL = import.meta.env.VITE_API_BASE_URL;
+
   const [keyword, setKeyword] = useState('');
   const [data, setData] = useState({ results: [], market_average: "$0.00", total_found: 0, legit_count: 0 });
   const [loading, setLoading] = useState(false);
@@ -96,7 +98,7 @@ function App() {
             <div className="bg-gradient-to-tr from-amber-500 to-orange-600 p-2 rounded-xl shadow-lg shadow-orange-500/20">
               <Zap size={22} fill="white" className="text-white" />
             </div>
-            <span>AMAI<span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-orange-500">.ENG</span></span>
+            <span>AM<span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-orange-500">AI</span></span>
           </div>
 
           <div className="flex items-center gap-4">
@@ -148,7 +150,7 @@ function App() {
             }, 1200);
 
             try {
-              const response = await axios.get(`http://127.0.0.1:8000/api/search?keyword=${keyword}`);
+              const response = await axios.get(`${api_baseURL}/api/search?keyword=${keyword}`);
 
               clearTimeout(statusTimer);
               setStatusMessage('Finishing & formatting assets...');
