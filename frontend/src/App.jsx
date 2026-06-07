@@ -141,10 +141,8 @@ function App() {
             if (!keyword) return;
 
             setLoading(true);
-            // Phase 1: Initiation
             setStatusMessage('Searching marketplaces...');
 
-            // Start a minor artificial delay mechanism to ensure the user perceives the steps
             const statusTimer = setTimeout(() => {
               setStatusMessage('Analyzing with AI (BART Engine)...');
             }, 1200);
@@ -152,11 +150,8 @@ function App() {
             try {
               const response = await axios.get(`http://127.0.0.1:8000/api/search?keyword=${keyword}`);
 
-              // Phase 3: Compilation
               clearTimeout(statusTimer);
               setStatusMessage('Finishing & formatting assets...');
-
-              // Brief pause so they see the finish state before layout populates
               await new Promise(resolve => setTimeout(resolve, 600));
 
               setData(response.data || { results: [], market_average: "$0.00", total_found: 0, legit_count: 0 });
@@ -167,12 +162,13 @@ function App() {
               alert("System Offline");
             } finally {
               setLoading(false);
-              setStatusMessage(''); // Reset state
+              setStatusMessage('');
             }
           }} className="mt-10 flex gap-3 justify-center max-w-2xl mx-auto relative">
             <div className="relative w-full">
               <input
                 type="text"
+                value={keyword}
                 placeholder="Search for tech products (e.g. RTX 4090, M3 Macbook Air)..."
                 className={`w-full border p-4 pl-6 rounded-2xl focus:ring-2 focus:ring-red-500 outline-none transition-all font-medium backdrop-blur-sm shadow-xl ${darkMode
                   ? 'bg-slate-900/60 border-slate-800/80 text-slate-200 placeholder:text-slate-600 focus:border-red-300'
@@ -189,10 +185,39 @@ function App() {
               <span>Analyze</span>
             </button>
           </form>
+
+          {/* Progress Loading Bar - Repositioned for optimal visual hierarchy */}
+          {loading && (
+            <div className="max-w-2xl mx-auto mt-8 text-left">
+              <div className="flex justify-between items-center mb-2.5 text-xs font-bold tracking-wide uppercase">
+                <span className="flex items-center gap-2 text-indigo-500">
+                  <Loader2 className="animate-spin text-amber-500" size={14} />
+                  {statusMessage}
+                </span>
+                <span className={`font-mono ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                  {statusMessage.includes('Searching') && '35%'}
+                  {statusMessage.includes('Analyzing') && '75%'}
+                  {statusMessage.includes('Finishing') && '95%'}
+                </span>
+              </div>
+
+              <div className={`w-full rounded-full h-2 overflow-hidden p-[1px] border ${darkMode ? 'bg-slate-950 border-slate-900' : 'bg-slate-200/60 border-slate-300/40'
+                }`}>
+                <div
+                  className="h-full bg-gradient-to-r from-amber-500 via-orange-500 to-indigo-600 rounded-full transition-all duration-700 ease-out shadow-sm"
+                  style={{
+                    width: statusMessage.includes('Searching') ? '35%' :
+                      statusMessage.includes('Analyzing') ? '75%' :
+                        statusMessage.includes('Finishing') ? '98%' : '0%'
+                  }}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Global Analytics Overview Panel */}
-        {data?.results?.length > 0 && (
+        {data?.results?.length > 0 && !loading && (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 mb-12">
             <div className={`border p-5 rounded-2xl flex items-center gap-4 backdrop-blur-sm ${darkMode ? 'bg-slate-900/40 border-slate-800/60' : 'bg-white border-slate-200 shadow-sm'}`}>
               <div className="bg-indigo-500/10 p-3 rounded-xl text-indigo-500 border border-indigo-500/10">
@@ -233,7 +258,7 @@ function App() {
         )}
 
         {/* Platform Origin Filter Tabs */}
-        {data?.results?.length > 0 && (
+        {data?.results?.length > 0 && !loading && (
           <div className={`flex items-center gap-2 mb-8 overflow-x-auto pb-2 border-b ${darkMode ? 'border-slate-900' : 'border-slate-200'}`}>
             {availableSources.map((tab) => (
               <button
@@ -253,126 +278,117 @@ function App() {
         )}
 
         {/* Dynamic Card Architecture Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredResults.map((product, index) => {
-            // 1. Normalize data by checking nested ai_analysis OR falling back to root-level backend fields
-            const analysis = {
-              status: product?.ai_analysis?.status || product?.ai_status || 'Unknown',
-              badge: product?.ai_analysis?.badge || product?.ai_deal || 'Standard',
-              value_score: Number(product?.ai_analysis?.value_score) || (product?.value_score ? Number(product.value_score) : 50),
-              opinion: product?.ai_analysis?.opinion || product?.ai_opinion || 'No analysis available.',
-              specs: product?.ai_analysis?.specs || product?.specs || {}
-            };
+        {!loading && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredResults.map((product, index) => {
+              const analysis = {
+                status: product?.ai_analysis?.status || product?.ai_status || 'Unknown',
+                badge: product?.ai_analysis?.badge || product?.ai_deal || 'Standard',
+                value_score: Number(product?.ai_analysis?.value_score) || (product?.value_score ? Number(product.value_score) : 50),
+                opinion: product?.ai_analysis?.opinion || product?.ai_opinion || 'No analysis available.',
+                specs: product?.ai_analysis?.specs || product?.specs || {}
+              };
 
-            // 2. Determine flag state cleanly
-            const isFlagged = analysis.status.includes('Flagged') || analysis.status.includes('🚩');
+              const isFlagged = analysis.status.includes('Flagged') || analysis.status.includes('🚩');
 
-            return (
-              <div
-                key={index}
-                className={`border rounded-2xl overflow-hidden flex flex-col justify-between transition-all duration-300 backdrop-blur-sm hover:-translate-y-0.5 ${isFlagged
-                  ? 'border-rose-500/20 hover:border-rose-500/40 bg-rose-950/5'
-                  : darkMode
-                    ? 'bg-slate-900/20 border-slate-800/60 hover:border-slate-700 hover:shadow-xl'
-                    : 'bg-white border-slate-200 shadow-sm hover:border-slate-300 hover:shadow-md'
-                  }`}
-              >
-                <div>
-                  {/* Media Window */}
-                  <div className={`relative h-52 p-6 flex items-center justify-center overflow-hidden border-b ${darkMode ? 'bg-white/[0.02] border-slate-900' : 'bg-slate-100/50 border-slate-200'
-                    }`}>
-                    <img
-                      src={product?.image || "https://via.placeholder.com/150"}
-                      className={`h-full object-contain opacity-95 transition-transform duration-500 ${darkMode ? 'mix-blend-lighten' : 'mix-blend-multiply'
-                        }`}
-                      alt={product?.title || 'Product'}
-                    />
-
-                    {/* Platform Label */}
-                    <div className={`absolute top-3.5 left-3.5 backdrop-blur-md text-[9px] font-black px-2.5 py-1 rounded-lg border uppercase tracking-wider ${darkMode ? 'bg-slate-950/80 border-slate-800 text-slate-300' : 'bg-white/90 border-slate-200 text-slate-600 shadow-sm'
+              return (
+                <div
+                  key={index}
+                  className={`border rounded-2xl overflow-hidden flex flex-col justify-between transition-all duration-300 backdrop-blur-sm hover:-translate-y-0.5 ${isFlagged
+                    ? 'border-rose-500/20 hover:border-rose-500/40 bg-rose-950/5'
+                    : darkMode
+                      ? 'bg-slate-900/20 border-slate-800/60 hover:border-slate-700 hover:shadow-xl'
+                      : 'bg-white border-slate-200 shadow-sm hover:border-slate-300 hover:shadow-md'
+                    }`}
+                >
+                  <div>
+                    {/* Media Window */}
+                    <div className={`relative h-52 p-6 flex items-center justify-center overflow-hidden border-b ${darkMode ? 'bg-white/[0.02] border-slate-900' : 'bg-slate-100/50 border-slate-200'
                       }`}>
-                      {product?.source || 'unknown'}
+                      <img
+                        src={product?.image || "https://via.placeholder.com/150"}
+                        className={`h-full object-contain opacity-95 transition-transform duration-500 ${darkMode ? 'mix-blend-lighten' : 'mix-blend-multiply'
+                          }`}
+                        alt={product?.title || 'Product'}
+                      />
+                      <div className={`absolute top-3.5 left-3.5 backdrop-blur-md text-[9px] font-black px-2.5 py-1 rounded-lg border uppercase tracking-wider ${darkMode ? 'bg-slate-950/80 border-slate-800 text-slate-300' : 'bg-white/90 border-slate-200 text-slate-600 shadow-sm'
+                        }`}>
+                        {product?.source || 'unknown'}
+                      </div>
+                      <div className={`absolute top-3.5 right-3.5 text-[10px] font-extrabold px-2.5 py-1 rounded-lg shadow-xl border ${getValueScoreColor(analysis.value_score)}`}>
+                        {analysis.badge}
+                      </div>
                     </div>
 
-                    {/* Deal Quality Label */}
-                    <div className={`absolute top-3.5 right-3.5 text-[10px] font-extrabold px-2.5 py-1 rounded-lg shadow-xl border ${getValueScoreColor(analysis.value_score)}`}>
-                      {analysis.badge}
+                    {/* Content Details */}
+                    <div className="p-5 pb-2">
+                      <h3 className={`font-semibold text-sm line-clamp-2 leading-relaxed h-10 ${darkMode ? 'text-slate-200' : 'text-slate-800'}`}>
+                        {product?.title || ''}
+                      </h3>
+
+                      {/* Dynamic AI Technical Spec Tags */}
+                      <div className="flex flex-wrap gap-1.5 mt-3 min-h-6">
+                        {analysis.specs?.cpu && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-500/10 text-indigo-500 border border-indigo-500/10">{analysis.specs.cpu}</span>
+                        )}
+                        {analysis.specs?.ram && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-500 border border-blue-500/10">{analysis.specs.ram}</span>
+                        )}
+                        {analysis.specs?.storage && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-violet-500/10 text-violet-400 border border-violet-500/10">{analysis.specs.storage}</span>
+                        )}
+                      </div>
+
+                      <div className="flex items-baseline gap-2 mt-4">
+                        <span className={`text-2xl font-black tracking-tight ${darkMode ? 'text-white' : 'text-slate-900'}`}>
+                          {formatCurrency(product?.price)}
+                        </span>
+                      </div>
+
+                      {/* Value Analysis Interface Meter */}
+                      <div className={`mt-4 pt-4 border-t ${darkMode ? 'border-slate-900' : 'border-slate-100'}`}>
+                        <div className="flex justify-between items-center text-[10px] font-bold mb-1.5 text-slate-400">
+                          <span className="uppercase tracking-wider flex items-center gap-1"><Info size={11} /> Value Score</span>
+                          <span className={`font-mono ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>{analysis.value_score}/100</span>
+                        </div>
+                        <div className={`w-full rounded-full h-1.5 overflow-hidden border ${darkMode ? 'bg-slate-950 border-slate-900' : 'bg-slate-100 border-slate-200'}`}>
+                          <div
+                            className={`h-full transition-all duration-500 ${getValueBarColor(analysis.value_score)}`}
+                            style={{ width: `${analysis.value_score}%` }}
+                          />
+                        </div>
+                        <p className={`text-[11px] font-medium mt-2 leading-relaxed line-clamp-2 italic ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                          "{analysis.opinion}"
+                        </p>
+                      </div>
                     </div>
                   </div>
 
-                  {/* Content Details */}
-                  <div className="p-5 pb-2">
-                    <h3 className={`font-semibold text-sm line-clamp-2 leading-relaxed h-10 ${darkMode ? 'text-slate-200' : 'text-slate-800'
-                      }`}>
-                      {product?.title || ''}
-                    </h3>
-
-                    {/* Dynamic AI Technical Spec Tags */}
-                    <div className="flex flex-wrap gap-1.5 mt-3 min-h-6">
-                      {analysis.specs?.cpu && (
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-500/10 text-indigo-500 border border-indigo-500/10">{analysis.specs.cpu}</span>
-                      )}
-                      {analysis.specs?.ram && (
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-500 border border-blue-500/10">{analysis.specs.ram}</span>
-                      )}
-                      {analysis.specs?.storage && (
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-violet-500/10 text-violet-400 border border-violet-500/10">{analysis.specs.storage}</span>
-                      )}
-                    </div>
-
-                    <div className="flex items-baseline gap-2 mt-4">
-                      <span className={`text-2xl font-black tracking-tight ${darkMode ? 'text-white' : 'text-slate-900'}`}>
-                        {formatCurrency(product?.price)}
-                      </span>
-                    </div>
-
-                    {/* Value Analysis Interface Meter */}
-                    <div className={`mt-4 pt-4 border-t ${darkMode ? 'border-slate-900' : 'border-slate-100'}`}>
-                      <div className="flex justify-between items-center text-[10px] font-bold mb-1.5 text-slate-400">
-                        <span className="uppercase tracking-wider flex items-center gap-1"><Info size={11} /> Value Score</span>
-                        <span className={`font-mono ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>{analysis.value_score}/100</span>
+                  {/* Action Row */}
+                  <div className="p-5 pt-2">
+                    <div className="mt-2 flex items-center justify-between">
+                      <div className={`flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-lg border ${analysis.status.includes('Legit') ? 'bg-emerald-500/5 text-emerald-500 border-emerald-500/10' : 'bg-rose-500/5 text-rose-500 border-rose-500/10'
+                        }`}>
+                        {analysis.status.includes('Legit') ? <CheckCircle size={12} /> : <AlertTriangle size={12} />}
+                        {analysis.status}
                       </div>
-                      <div className={`w-full rounded-full h-1.5 overflow-hidden border ${darkMode ? 'bg-slate-950 border-slate-900' : 'bg-slate-100 border-slate-200'}`}>
-                        <div
-                          className={`h-full transition-all duration-500 ${getValueBarColor(analysis.value_score)}`}
-                          style={{ width: `${analysis.value_score}%` }}
-                        />
-                      </div>
-                      <p className={`text-[11px] font-medium mt-2 leading-relaxed line-clamp-2 italic ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                        "{analysis.opinion}"
-                      </p>
+
+                      <a
+                        href={product?.link || '#'}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={`flex items-center gap-1 text-[10px] font-bold transition-colors uppercase tracking-widest px-3 py-1.5 rounded-lg border ${darkMode ? 'text-indigo-400 hover:text-indigo-300 bg-slate-950 border-slate-900' : 'text-indigo-600 hover:text-indigo-700 bg-slate-50 border-slate-200 shadow-sm'
+                          }`}
+                      >
+                        View Link <ExternalLink size={11} />
+                      </a>
                     </div>
                   </div>
                 </div>
-
-                {/* Action Row */}
-                <div className="p-5 pt-2">
-                  <div className="mt-2 flex items-center justify-between">
-                    <div className={`flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-lg border ${analysis.status.includes('Legit')
-                      ? 'bg-emerald-500/5 text-emerald-500 border-emerald-500/10'
-                      : 'bg-rose-500/5 text-rose-500 border-rose-500/10'
-                      }`}>
-                      {analysis.status.includes('Legit') ? <CheckCircle size={12} /> : <AlertTriangle size={12} />}
-                      {analysis.status}
-                    </div>
-
-                    <a
-                      href={product?.link || '#'}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={`flex items-center gap-1 text-[10px] font-bold transition-colors uppercase tracking-widest px-3 py-1.5 rounded-lg border ${darkMode
-                        ? 'text-indigo-400 hover:text-indigo-300 bg-slate-950 border-slate-900'
-                        : 'text-indigo-600 hover:text-indigo-700 bg-slate-50 border-slate-200 shadow-sm'
-                        }`}
-                    >
-                      View Link <ExternalLink size={11} />
-                    </a>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* Empty Search Prompt Base */}
         {(data?.results?.length === 0 || !data?.results) && !loading && (
@@ -386,35 +402,6 @@ function App() {
             <p className={`text-xs max-w-xs mx-auto leading-relaxed ${darkMode ? 'text-slate-500' : 'text-slate-400'}`}>
               Input a focal target parameter keyword into the analyzer cluster above to trigger live system loops.
             </p>
-          </div>
-        )}
-
-        {/* Dynamic Loading Progress Architecture */}
-        {loading && (
-          <div className="max-w-2xl mx-auto mt-8 animate-fade-in">
-            <div className="flex justify-between items-center mb-2.5 text-xs font-bold tracking-wide uppercase">
-              <span className="flex items-center gap-2 text-indigo-500">
-                <Loader2 className="animate-spin text-amber-500" size={14} />
-                {statusMessage}
-              </span>
-              <span className={`font-mono ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                {statusMessage.includes('Searching') && '35%'}
-                {statusMessage.includes('Analyzing') && '75%'}
-                {statusMessage.includes('Finishing') && '95%'}
-              </span>
-            </div>
-
-            <div className={`w-full rounded-full h-2 overflow-hidden p-[1px] border ${darkMode ? 'bg-slate-950 border-slate-900' : 'bg-slate-200/60 border-slate-300/40'
-              }`}>
-              <div
-                className="h-full bg-gradient-to-r from-amber-500 via-orange-500 to-indigo-600 rounded-full transition-all duration-700 ease-out shadow-sm"
-                style={{
-                  width: statusMessage.includes('Searching') ? '35%' :
-                    statusMessage.includes('Analyzing') ? '75%' :
-                      statusMessage.includes('Finishing') ? '98%' : '0%'
-                }}
-              />
-            </div>
           </div>
         )}
       </main>
