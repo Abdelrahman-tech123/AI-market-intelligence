@@ -65,8 +65,10 @@ async def search(keyword: str):
     legit_products_for_avg = []
     
     for product in all_products:
-        # Pre-evaluation context passes an avg_price of 0
+        # Pre-evaluation context passes an avg_price of 0 to isolate layout validity
         status, _ = analyze_listing_quality(product['title'], product['price'], 0)
+        
+        # Populate flat fallback for initial evaluation tracking
         product['ai_status'] = status
         
         # Isolate baseline entries to build clean calculations
@@ -85,7 +87,15 @@ async def search(keyword: str):
             product['price'], 
             avg_market_price
         )
-        # Nest the complete AI evaluation dictionary directly into the JSON record
+        
+        # 🌟 FIXED: Flatten individual analysis properties to the base object level 
+        # This fixes the missing data streams appearing in your Postman results.
+        product['ai_status'] = detail_analysis.get("status", "Unknown")
+        product['ai_deal'] = detail_analysis.get("badge", "Standard")
+        product['value_score'] = detail_analysis.get("value_score", 50)
+        product['opinion'] = detail_analysis.get("opinion", "No analysis available.")
+        
+        # Keep the nested structure intact for complete technical specification tracking
         product['ai_analysis'] = detail_analysis
 
     return {

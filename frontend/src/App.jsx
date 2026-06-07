@@ -282,11 +282,21 @@ function App() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {filteredResults.map((product, index) => {
               const analysis = {
-                status: product?.ai_analysis?.status || product?.ai_status || 'Unknown',
-                badge: product?.ai_analysis?.badge || product?.ai_deal || 'Standard',
-                value_score: Number(product?.ai_analysis?.value_score) || (product?.value_score ? Number(product.value_score) : 50),
-                opinion: product?.ai_analysis?.opinion || product?.ai_opinion || 'No analysis available.',
-                specs: product?.ai_analysis?.specs || product?.specs || {}
+                // 1. Map to "ai_status" from Postman
+                status: product?.ai_status || 'Unknown',
+
+                // 2. Map to "ai_deal" from Postman
+                badge: product?.ai_deal || 'Standard',
+
+                // 3. Fallback or derive a score based on the deal type until backend sends it
+                value_score: Number(product?.value_score) || (
+                  product?.ai_deal?.includes('Steal') ? 90 :
+                    product?.ai_deal?.includes('Fair') ? 70 :
+                      product?.ai_deal?.includes('Premium') ? 40 : 50
+                ),
+
+                // 4. Generate a quick frontend opinion based on the deal text for now
+                opinion: product?.opinion || `This item is flagged as a ${product?.ai_deal || 'Normal Deal'} and its legitimacy status is verified as ${product?.ai_status || 'unconfirmed'}.`
               };
 
               const isFlagged = analysis.status.includes('Flagged') || analysis.status.includes('🚩');
