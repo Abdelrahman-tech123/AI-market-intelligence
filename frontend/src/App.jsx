@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 
 function App() {
-  const api_baseURL = import.meta.env.VITE_API_BASE_URL;
+  const api_baseURL = import.meta.env._API_BASE_URL;
 
   const [keyword, setKeyword] = useState('');
   const [data, setData] = useState({ results: [], market_average: "$0.00", total_found: 0, legit_count: 0 });
