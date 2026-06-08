@@ -29,14 +29,14 @@ def debug_print(*args, **kwargs):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    debug_print(f"🚀 AI Market Intelligence: ONLINE")
+    print(f"🚀 AI Market Intelligence: ONLINE")
     try:
         await update_exchange_rates()
-        debug_print("✅ Exchange rates updated successfully.")
+        print("✅ Exchange rates updated successfully.")
     except Exception as e:
-        debug_print(f"⚠️ Exchange rate sync failed: {e}")
+        print(f"⚠️ Exchange rate sync failed: {e}")
     yield
-    debug_print("🛑 Server shutting down...")
+    print("🛑 Server shutting down...")
 
 app = FastAPI(lifespan=lifespan)
 
