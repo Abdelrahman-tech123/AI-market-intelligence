@@ -24,7 +24,8 @@ load_dotenv()
 DEBUG_MODE = os.getenv("DEBUG_MODE", "True") == "True"
 
 def debug_print(*args, **kwargs):
-        print(*args, **kwargs)
+        if (DEBUG_MODE):
+            print(*args, **kwargs)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
